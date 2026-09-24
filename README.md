@@ -2,8 +2,6 @@
 
 Official implementation of **Domain-Conditioned Adapter Generation for Multimodal Continual Instruction Tuning**.
 
-Qi Zhu, Weili Zeng, Yichao Yan · Shanghai Jiao Tong University
-
 ## Abstract
 
 Multimodal continual instruction tuning aims to acquire knowledge from new domains while retaining previously learned capabilities, without replaying past training data. Existing approaches face a trade-off: parameter-sharing methods struggle to adapt to specialized domains with substantial distribution shift, whereas allocating separate parameters to each domain incurs growing training parameter cost with every new task. To address these issues, we propose DCAG, a compact shared generator that produces low-rank residuals for domain incremental continual adaptation. Conditioned on domain identity and features extracted by frozen domain encoders, the generator aggregates domain knowledge into per-sample low-rank residual updates for both the visual projector and the language decoder. On the five-domain MLLM-DCL benchmark, DCAG achieves final average accuracies of 69.08% and 68.40% on LLaVA-1.5-7B and InternVL-Chat, respectively, outperforming all parameter-sharing baselines and approaching the performance of domain-isolated method MR-LoRA with 45% fewer learned parameters. Positive backward transfer on both backbones further supports the benefits of shared, domain-conditioned adaptation.
