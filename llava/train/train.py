@@ -1583,7 +1583,11 @@ def train():
         if current_task_idx is None:
             current_task_idx = model.dcag_controller.update_task_idx_from_state()
         rank0_print(f"[DCAG][task] starting task_idx={current_task_idx}")
-        model.start_dcag_task(int(current_task_idx))
+        if data_args.domain_name not in DCAG_DOMAIN_TO_ID:
+            raise ValueError("DCAG training requires a valid --domain_name")
+        model.start_dcag_task(
+            int(current_task_idx), domain_id=DCAG_DOMAIN_TO_ID[data_args.domain_name]
+        )
         model.dcag_controller.write_dcag_config(training_args.output_dir)
 
     rank0_print("[DCAG][startup] begin dataset build")

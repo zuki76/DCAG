@@ -1746,11 +1746,15 @@ class DCAGGenerator(nn.Module):
 
         self.domain_embed_enabled = bool(getattr(config, "domain_embed_enabled", False))
         if self.domain_embed_enabled:
-            self.domain_embed = nn.Parameter(
-                torch.zeros(len(DCAG_DOMAIN_TO_ID), self.hidden_dim)
+            self.register_buffer(
+                "domain_embed", torch.zeros(len(DCAG_DOMAIN_TO_ID), self.hidden_dim)
             )
+            self.current_domain_embed = nn.Parameter(torch.zeros(self.hidden_dim))
+            self.register_buffer("domain_embed_active_id", torch.tensor(-1))
         else:
-            self.register_parameter("domain_embed", None)
+            self.register_buffer("domain_embed", None)
+            self.register_parameter("current_domain_embed", None)
+            self.register_buffer("domain_embed_active_id", None)
 
         if self.arch == "mlp_additive":
             self.mlp_trunk = _MLPAdditiveTrunk(
@@ -1795,6 +1799,63 @@ class DCAGGenerator(nn.Module):
             self.gamma_head = None
 
         self._zero_init_heads()
+
+    @torch.no_grad()
+    def start_domain(self, domain_id: int):
+        """Keep completed embeddings in buffers and train only the selected domain."""
+        if self.domain_embed is None:
+            return
+        domain_id = int(domain_id)
+        if not 0 <= domain_id < self.domain_embed.shape[0]:
+            raise ValueError(f"Invalid domain_id: {domain_id}")
+        if int(self.domain_embed_active_id.item()) == domain_id:
+            return
+        self.freeze_domain_embedding()
+        self.current_domain_embed.copy_(self.domain_embed[domain_id])
+        self.current_domain_embed.grad = None
+        self.domain_embed_active_id.fill_(domain_id)
+
+    @torch.no_grad()
+    def freeze_domain_embedding(self):
+        if self.domain_embed is None:
+            return
+        domain_id = int(self.domain_embed_active_id.item())
+        if domain_id >= 0:
+            self.domain_embed[domain_id].copy_(self.current_domain_embed)
+            self.domain_embed_active_id.fill_(-1)
+            self.current_domain_embed.grad = None
+
+    def _domain_embedding(self, domain_id: int) -> torch.Tensor:
+        if int(self.domain_embed_active_id.item()) == int(domain_id):
+            return self.current_domain_embed
+        return self.domain_embed[int(domain_id)]
+
+    def _load_from_state_dict(
+        self,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ):
+        # Older checkpoints store all domains in a single parameter table.
+        if self.domain_embed is not None and prefix + "domain_embed" in state_dict:
+            active_key = prefix + "domain_embed_active_id"
+            current_key = prefix + "current_domain_embed"
+            if active_key not in state_dict and current_key not in state_dict:
+                state_dict[active_key] = torch.tensor(-1)
+                state_dict[current_key] = torch.zeros_like(self.current_domain_embed)
+        super()._load_from_state_dict(
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        )
 
     def _zero_init_heads(self):
 
@@ -1854,7 +1915,7 @@ class DCAGGenerator(nn.Module):
         ):
             d = int(domain_id)
             if 0 <= d < self.domain_embed.shape[0]:
-                d_vec = self.domain_embed[d].to(device=device, dtype=dtype)
+                d_vec = self._domain_embedding(d).to(device=device, dtype=dtype)
                 all_slots = all_slots + d_vec.unsqueeze(0)
 
         return all_slots.unsqueeze(0).expand(batch, -1, -1).contiguous()
@@ -1964,7 +2025,7 @@ class DCAGGenerator(nn.Module):
         ):
             d = int(domain_id)
             if 0 <= d < self.domain_embed.shape[0]:
-                slot_token_rows = slot_token_rows + self.domain_embed[d].to(
+                slot_token_rows = slot_token_rows + self._domain_embedding(d).to(
                     device=device, dtype=dtype
                 ).unsqueeze(0)
         slot_tokens = slot_token_rows.unsqueeze(0).expand(B, -1, -1).contiguous()
@@ -2049,7 +2110,7 @@ class DCAGGenerator(nn.Module):
         ):
             d = int(domain_id)
             if 0 <= d < self.domain_embed.shape[0]:
-                proj_e = proj_e + self.domain_embed[d].to(
+                proj_e = proj_e + self._domain_embedding(d).to(
                     device=device, dtype=dtype
                 ).unsqueeze(0)
         slot_tokens = proj_e.unsqueeze(0).expand(B, -1, -1).contiguous()
@@ -2928,19 +2989,6 @@ class DCAGController(nn.Module):
             self.instruction_gate = None
         self.current_instruction_token: Optional[torch.Tensor] = None
 
-        if self.generator.domain_embed is not None:
-            ctrl_self = self
-
-            def _domain_embed_grad_mask(grad: torch.Tensor) -> torch.Tensor:
-                d = ctrl_self.current_domain_id
-                if d is None:
-                    return torch.zeros_like(grad)
-                mask = torch.zeros_like(grad)
-                mask[int(d)] = 1.0
-                return grad * mask
-
-            self.generator.domain_embed.register_hook(_domain_embed_grad_mask)
-
         kind_per_slot: Dict[int, str] = {}
         d_out_per_slot: Dict[int, int] = {}
         for slot_id in range(self.num_total_slots):
@@ -3275,6 +3323,13 @@ class DCAGController(nn.Module):
         domain_ids: torch.Tensor,
         instruction_features: Optional[torch.Tensor] = None,
     ):
+        if self.training and self.generator.domain_embed is not None:
+            domains = torch.unique(domain_ids)
+            active_domain = int(self.generator.domain_embed_active_id.item())
+            if domains.numel() != 1 or int(domains.item()) != active_domain:
+                raise ValueError(
+                    "Batch domain must match the active DCAG training domain"
+                )
 
         self._beff_cache = {}
         self._a_proj_cache = {}
@@ -4313,8 +4368,10 @@ class DCAGController(nn.Module):
         uv_coeff = float(getattr(self.config, "preservation_uv_coeff", 1.0))
         return trunk_coeff * trunk_term + uv_coeff * uv_term
 
-    def start_task(self, task_idx: int):
+    def start_task(self, task_idx: int, domain_id: Optional[int] = None):
         self.current_task_idx = task_idx
+        self.current_domain_id = task_idx if domain_id is None else int(domain_id)
+        self.generator.start_domain(self.current_domain_id)
         self.task_slice_manager.start_task(task_idx)
 
         if self.residual_lora_manager is not None:
@@ -4389,6 +4446,7 @@ class DCAGController(nn.Module):
         was_training = self.training
         self.eval()
         try:
+            self.generator.freeze_domain_embedding()
             final_metrics = self.task_slice_manager.retract_R_current()
             if final_metrics is not None:
                 max_off_diag, max_off_orth = final_metrics
@@ -4698,9 +4756,9 @@ class DCAGModelMixin:
         if self.dcag_controller is not None:
             self.dcag_controller.snapshot_and_end_task()
 
-    def start_dcag_task(self, task_idx: int):
+    def start_dcag_task(self, task_idx: int, domain_id: Optional[int] = None):
         if self.dcag_controller is not None:
-            self.dcag_controller.start_task(task_idx)
+            self.dcag_controller.start_task(task_idx, domain_id=domain_id)
 
     def get_dcag_preservation_loss(self) -> Optional[torch.Tensor]:
         if self.dcag_controller is None:
