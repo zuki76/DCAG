@@ -1,0 +1,11 @@
+{
+  "model_name": "checkpoints/llava-v1.5-7b",
+  "vision_tower": "checkpoints/clip-vit-large-patch14-336",
+  "domain_encoders": {
+    "rs_domain_model_path": "checkpoints/domains/rs/vit-b-checkpoint-1599.pth",
+    "med_domain_model_path": "checkpoints/domains/pubmedclip",
+    "ad_domain_model_path": "checkpoints/domains/ad/geomim_base.pth",
+    "sci_domain_model_path": "checkpoints/domains/pix2struct-base",
+    "fin_domain_model_path": "checkpoints/domains/candlefusion"
+  }
+}

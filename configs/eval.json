@@ -1,0 +1,6 @@
+{
+  "routing": "prototype",
+  "batch_size": 1,
+  "output_dir": "results",
+  "conv_mode": "vicuna_v1"
+}

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dcag"
+version = "0.1.0"
+description = "Domain-Conditioned Adapter Generation for Multimodal Continual Instruction Tuning"
+readme = "README.md"
+requires-python = ">=3.10,<3.12"
+dependencies = [
+    "torch==2.0.1", "torchvision==0.15.2",
+    "transformers==4.31.0", "tokenizers>=0.12.1,<0.14",
+    "sentencepiece==0.1.99", "accelerate==0.21.0", "peft==0.4.0",
+    "numpy==1.23.5", "scikit-learn==1.2.2", "timm==0.6.13",
+    "einops==0.6.1", "einops-exts==0.0.4", "shortuuid", "Pillow", "tqdm",
+    "requests", "httpx==0.24.0", "packaging",
+]
+
+[project.optional-dependencies]
+train = ["deepspeed==0.9.5", "pydantic>=1,<2", "ninja", "bitsandbytes==0.41.0"]
+
+[tool.setuptools.packages.find]
+include = ["llava*", "domain_encoders*"]
+
+[tool.setuptools.package-data]
+"domain_encoders.rs" = ["LICENSE"]

@@ -1,0 +1,6 @@
+{
+  "train_path": "data/AD/train.json",
+  "test_path": "data/AD/test.json",
+  "train_folder": "data/AD",
+  "test_folder": "data/AD"
+}
